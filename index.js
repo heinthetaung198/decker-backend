@@ -1,7 +1,8 @@
-// index.js
 const axios = require("axios");
 const express = require("express");
 const cors = require("cors");
+const fs = require("fs");
+const csv = require("csv-parser"); // 🔁 added to read CSV
 require("dotenv").config();
 
 const app = express();
@@ -9,8 +10,19 @@ app.use(cors());
 app.use(express.json());
 
 const HELIUS_API_KEY = process.env.HELIUS_API_KEY;
-const MAX_LOOPS = 15; // 100 x 15 = 1500 transactions max
-const SOL_TO_USD = 100; // estimate 1 SOL = $100
+const MAX_LOOPS = 15;
+const SOL_TO_USD = 100;
+
+// 🔁 OG whitelist Set
+const ogWhitelist = new Set();
+fs.createReadStream("og_whitelist.csv")
+  .pipe(csv())
+  .on("data", (row) => {
+    ogWhitelist.add(row.wallet.trim());
+  })
+  .on("end", () => {
+    console.log("✅ OG whitelist loaded");
+  });
 
 app.get("/check-eligibility", async (req, res) => {
   const wallet = req.query.wallet;
@@ -76,8 +88,12 @@ app.get("/check-eligibility", async (req, res) => {
       reward = 200;
     }
 
+    // 🧙‍♂️ OG NFT holder check
+    const isOG = ogWhitelist.has(wallet);
+
     console.log("\n📊 Total USD Volume:", totalUSD.toFixed(2));
     console.log("🏆 Tier:", tier, "Reward:", reward);
+    console.log("🧙 OG Holder:", isOG);
 
     res.json({
       wallet,
@@ -85,6 +101,7 @@ app.get("/check-eligibility", async (req, res) => {
       tier: tier || "None",
       reward,
       eligible: tier !== null,
+      isOG, // ➕ return to frontend
     });
   } catch (err) {
     console.error("❌ Error checking eligibility:", err.message);
