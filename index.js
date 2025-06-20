@@ -101,7 +101,7 @@ app.get("/check-eligibility", async (req, res) => {
       tier: tier || "None",
       reward,
       eligible: tier !== null,
-      isOG, // ➕ return to frontend
+      isOGHolder: isOG, // ➕ return to frontend
     });
   } catch (err) {
     console.error("❌ Error checking eligibility:", err.message);
