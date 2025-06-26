@@ -2,7 +2,7 @@ const axios = require("axios");
 const express = require("express");
 const cors = require("cors");
 const fs = require("fs");
-const csv = require("csv-parser"); // 🔁 added to read CSV
+const csv = require("csv-parser");
 require("dotenv").config();
 
 const app = express();
@@ -10,10 +10,10 @@ app.use(cors());
 app.use(express.json());
 
 const HELIUS_API_KEY = process.env.HELIUS_API_KEY;
-const MAX_LOOPS = 15;
+const MAX_LOOPS = 10;
 const SOL_TO_USD = 100;
 
-// 🔁 OG whitelist Set
+// ✅ OG whitelist set
 const ogWhitelist = new Set();
 fs.createReadStream("og_whitelist.csv")
   .pipe(csv())
@@ -23,6 +23,11 @@ fs.createReadStream("og_whitelist.csv")
   .on("end", () => {
     console.log("✅ OG whitelist loaded");
   });
+
+// ✅ Optional: catch unhandled promise rejection
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("💥 Unhandled Rejection:", reason);
+});
 
 app.get("/check-eligibility", async (req, res) => {
   const wallet = req.query.wallet;
@@ -37,19 +42,31 @@ app.get("/check-eligibility", async (req, res) => {
       const url = `https://api.helius.xyz/v0/addresses/${wallet}/transactions?api-key=${HELIUS_API_KEY}&limit=100${before ? `&before=${before}` : ""}`;
       console.log(`\n📡 Fetching transactions (loop ${loopCount + 1}): ${url}`);
 
-      const txResponse = await axios.get(url);
+      let txResponse;
+      try {
+        txResponse = await axios.get(url, { timeout: 10000 }); // 10s timeout
+      } catch (fetchErr) {
+        console.error("❌ Error fetching transactions:", fetchErr.message);
+        if (fetchErr.response?.data) {
+          console.error("Response data:", fetchErr.response.data);
+        }
+        break;
+      }
+
       const txs = txResponse.data;
       console.log(`🔁 Got ${txs.length} transactions`);
-
       if (!txs || txs.length === 0) break;
 
       for (const tx of txs) {
-        console.log(`\n📄 Processing tx: ${tx.signature}`);
+        console.log(`📄 Processing tx: ${tx.signature}`);
 
         if (tx.nativeTransfers && tx.nativeTransfers.length > 0) {
           for (const transfer of tx.nativeTransfers) {
             console.log("🔍 Native Transfer:", transfer);
-            if (transfer.toUserAccount === wallet || transfer.fromUserAccount === wallet) {
+            if (
+              transfer.toUserAccount === wallet ||
+              transfer.fromUserAccount === wallet
+            ) {
               const amountSOL = transfer.amount / 1_000_000_000;
               if (amountSOL > 0) {
                 const usd = amountSOL * SOL_TO_USD;
@@ -73,27 +90,28 @@ app.get("/check-eligibility", async (req, res) => {
 
     if (totalUSD >= 3_000_000) {
       tier = 1;
-      reward = 15000;
+      reward = 25000;
     } else if (totalUSD >= 500_000) {
       tier = 2;
-      reward = 5000;
+      reward = 15000;
     } else if (totalUSD >= 250_000) {
       tier = 3;
-      reward = 2000;
+      reward = 7000;
     } else if (totalUSD >= 30_000) {
       tier = 4;
-      reward = 600;
+      reward = 3000;
     } else if (totalUSD >= 1_000) {
       tier = 5;
-      reward = 200;
+      reward = 1500;
     }
 
-    // 🧙‍♂️ OG NFT holder check
     const isOG = ogWhitelist.has(wallet);
+    const totalWithOG = isOG ? reward + 15000 : reward;
 
     console.log("\n📊 Total USD Volume:", totalUSD.toFixed(2));
     console.log("🏆 Tier:", tier, "Reward:", reward);
     console.log("🧙 OG Holder:", isOG);
+    console.log("🎁 Total with OG:", totalWithOG);
 
     res.json({
       wallet,
@@ -101,7 +119,8 @@ app.get("/check-eligibility", async (req, res) => {
       tier: tier || "None",
       reward,
       eligible: tier !== null,
-      isOGHolder: isOG, // ➕ return to frontend
+      isOGHolder: isOG,
+      totalWithOG,
     });
   } catch (err) {
     console.error("❌ Error checking eligibility:", err.message);
