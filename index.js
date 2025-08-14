@@ -2,9 +2,9 @@
 const axios = require("axios");
 const express = require("express");
 const cors = require("cors");
-const fs = require("fs");
 const csv = require("csv-parser");
 const mongoose = require("mongoose");
+const { Readable } = require("stream");
 require("dotenv").config();
 
 const { Connection } = require("@solana/web3.js");
@@ -20,9 +20,11 @@ const MAX_LOOPS = 10;
 const SOL_TO_USD = 100;
 
 // === MongoDB setup ===
-mongoose.connect(process.env.MONGO_URI, {
-  dbName: "wallet_cache",
-});
+if (!process.env.MONGO_URI) {
+  console.error("❌ Missing MONGO_URI in environment variables!");
+  process.exit(1);
+}
+mongoose.connect(process.env.MONGO_URI, { dbName: "wallet_cache" });
 const txCacheSchema = new mongoose.Schema({
   wallet: { type: String, required: true, unique: true },
   transactions: { type: Array, default: [] },
@@ -30,45 +32,48 @@ const txCacheSchema = new mongoose.Schema({
 });
 const TxCache = mongoose.model("TxCache", txCacheSchema);
 
-// === Load whitelists ===
+// === CSV whitelists from GitHub ===
 const degenMfersMap = new Map();
-fs.createReadStream("degen_mfers.csv")
-  .pipe(csv())
-  .on("data", (row) => {
-    degenMfersMap.set(row.wallet.trim().toLowerCase(), parseInt(row.amount, 10) || 0);
-  })
-  .on("end", () => console.log("✅ Degen Mfers whitelist loaded"));
-
 const ogWhitelist = new Set();
-fs.createReadStream("og_whitelist.csv")
-  .pipe(csv())
-  .on("data", (row) => ogWhitelist.add(row.wallet.trim().toLowerCase()))
-  .on("end", () => console.log("✅ OG whitelist loaded"));
-
 const deckerRoleHolders = new Set();
-fs.createReadStream("decker_role_holder.csv")
-  .pipe(csv())
-  .on("data", (row) => row.wallet && deckerRoleHolders.add(row.wallet.trim().toLowerCase()))
-  .on("end", () => console.log("✅ Decker Role Holder whitelist loaded"));
+
+async function loadCsvFromGitHub(url, mapOrSet, isMap = false) {
+  try {
+    const resp = await axios.get(url);
+    Readable.from(resp.data)
+      .pipe(csv())
+      .on("data", row => {
+        if (row.wallet) {
+          if (isMap) mapOrSet.set(row.wallet.trim().toLowerCase(), parseInt(row.amount, 10) || 0);
+          else mapOrSet.add(row.wallet.trim().toLowerCase());
+        }
+      })
+      .on("end", () => console.log(`✅ CSV loaded from ${url}`));
+  } catch (err) {
+    console.error(`❌ Failed to load CSV from ${url}:`, err.message);
+  }
+}
+
+// Replace with your actual GitHub raw URLs
+loadCsvFromGitHub("https://raw.githubusercontent.com/username/repo/main/degen_mfers.csv", degenMfersMap, true);
+loadCsvFromGitHub("https://raw.githubusercontent.com/username/repo/main/og_whitelist.csv", ogWhitelist);
+loadCsvFromGitHub("https://raw.githubusercontent.com/username/repo/main/decker_role_holder.csv", deckerRoleHolders);
 
 // Optional: catch unhandled promise rejection
 process.on("unhandledRejection", (reason) => console.error("💥 Unhandled Rejection:", reason));
 
 const HELIUS_API_KEY = process.env.HELIUS_API_KEY;
 if (!HELIUS_API_KEY) {
-  console.error("❌ Missing Helius API Key! Set HELIUS_API_KEY in .env");
+  console.error("❌ Missing Helius API Key! Set HELIUS_API_KEY in environment variables");
   process.exit(1);
 }
 
 // === Helius fetch with retry and caching ===
 async function fetchTransactions(wallet) {
   const walletLower = wallet.toLowerCase();
-
-  // Check cache first
   const cached = await TxCache.findOne({ wallet: walletLower });
   if (cached && cached.transactions?.length > 0) {
     console.log(`⚡ Using cached transactions for ${walletLower}`);
-    console.log(`   📦 Cached tx count: ${cached.transactions.length}, last updated: ${cached.updatedAt}`);
     return cached.transactions;
   }
 
@@ -86,19 +91,16 @@ async function fetchTransactions(wallet) {
           const txs = resp.data;
           allTxs = allTxs.concat(txs);
           if (txs.length === 0) {
-            console.log("🔚 No more transactions, stopping loop");
             success = true;
             break;
           }
           before = txs[txs.length - 1].signature;
           success = true;
           break;
-        } else {
-          console.warn("⚠️ Unexpected Helius response format");
         }
       } catch (err) {
         console.warn(`⚠️ Helius fetch failed (attempt ${attempt}):`, err.message);
-        await new Promise((r) => setTimeout(r, 500 * attempt));
+        await new Promise(r => setTimeout(r, 500 * attempt));
       }
     }
     if (!success) {
@@ -130,7 +132,7 @@ app.get("/check-eligibility", async (req, res) => {
   const wallet = walletRaw.trim().toLowerCase();
 
   try {
-    const txs = await fetchTransactions(walletRaw.trim());
+    const txs = await fetchTransactions(wallet);
 
     let totalUSD = 0;
     let relevantTxCount = 0;
@@ -168,11 +170,6 @@ app.get("/check-eligibility", async (req, res) => {
     let finalTotal = totalWithOG + degenBonus;
     if (isDecker) finalTotal += 15000;
 
-    console.log(`⚡ Using cached transactions for ${wallet}`);
-    console.log(`   📦 Cached tx count: ${txs.length}, Relevant tx count: ${relevantTxCount}`);
-
-    console.log(`📊 Total USD: ${totalUSD.toFixed(2)}, Tier: ${tier}, OG: ${isOG}, Degen: ${isDegen}, Decker: ${isDecker}, Final: ${finalTotal}`);
-
     res.json({
       wallet,
       volumeUSD: totalUSD.toFixed(2),
@@ -192,7 +189,6 @@ app.get("/check-eligibility", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
-
 
 // === Start server ===
 app.listen(5000, () => console.log("✅ Backend running on http://localhost:5000"));
