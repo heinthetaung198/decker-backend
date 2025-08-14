@@ -57,7 +57,7 @@ async function loadCsvFromGitHub(url, mapOrSet, isMap = false) {
 // Replace with your actual GitHub raw URLs
 loadCsvFromGitHub("https://raw.githubusercontent.com/username/repo/main/degen_mfers.csv", degenMfersMap, true);
 loadCsvFromGitHub("https://raw.githubusercontent.com/username/repo/main/og_whitelist.csv", ogWhitelist);
-loadCsvFromGitHub("https://raw.githubusercontent.com/username/repo/main/decker_role_holder.csv", deckerRoleHolders);
+loadCsvFromGitHub("https://github.com/heinthetaung198/decker-backend/blob/main/decker_role_holder.csv", deckerRoleHolders);
 
 // Optional: catch unhandled promise rejection
 process.on("unhandledRejection", (reason) => console.error("💥 Unhandled Rejection:", reason));
@@ -192,3 +192,4 @@ app.get("/check-eligibility", async (req, res) => {
 
 // === Start server ===
 app.listen(5000, () => console.log("✅ Backend running on http://localhost:5000"));
+
