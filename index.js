@@ -53,10 +53,14 @@ function loadCSVFromGitHub(url, type = "map", valueField = "amount") {
 }
 
 // === GitHub CSV URLs ===
-const DEGEN_CSV ="https://github.com/heinthetaung198/decker-backend/blob/main/degen_mfers.csv";
-const OG_CSV = "https://github.com/heinthetaung198/decker-backend/blob/main/og_whitelist.csv";
-const DECKER_CSV = "https://github.com/heinthetaung198/decker-backend/blob/main/decker_role_holder.csv";
-let degenMfersMap, ogWhitelist, deckerRoleHolders;
+const DEGEN_CSV = "https://raw.githubusercontent.com/heinthetaung198/decker-backend/main/degen_mfers.csv";
+const OG_CSV = "https://raw.githubusercontent.com/heinthetaung198/decker-backend/main/og_whitelist.csv";
+const DECKER_CSV = "https://raw.githubusercontent.com/heinthetaung198/decker-backend/main/decker_role_holder.csv";
+
+let degenMfersMap = new Map();
+let ogWhitelist = new Set();
+let deckerRoleHolders = new Set();
+
 
 async function loadAllWhitelists() {
   console.log("📡 Loading whitelists from GitHub...");
@@ -218,3 +222,4 @@ loadAllWhitelists().then(() => {
 }).catch(err => {
   console.error("❌ Failed to load whitelists:", err);
 });
+
