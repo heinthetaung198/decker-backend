@@ -64,15 +64,17 @@ let deckerRoleHolders = new Set();
 
 async function loadAllWhitelists() {
   console.log("📡 Loading whitelists from GitHub...");
-  degenMfersMap = await loadCSVFromGitHub(degenMfersURL, "map", "amount");
+  
+  degenMfersMap = await loadCSVFromGitHub(DEGEN_CSV, "map", "amount");
   console.log("✅ Degen Mfers whitelist loaded");
 
-  ogWhitelist = await loadCSVFromGitHub(ogWhitelistURL, "set");
+  ogWhitelist = await loadCSVFromGitHub(OG_CSV, "set");
   console.log("✅ OG whitelist loaded");
 
-  deckerRoleHolders = await loadCSVFromGitHub(deckerRoleURL, "set");
+  deckerRoleHolders = await loadCSVFromGitHub(DECKER_CSV, "set");
   console.log("✅ Decker Role Holder whitelist loaded");
 }
+
 
 // Optional: catch unhandled promise rejection
 process.on("unhandledRejection", (reason) => console.error("💥 Unhandled Rejection:", reason));
@@ -222,4 +224,5 @@ loadAllWhitelists().then(() => {
 }).catch(err => {
   console.error("❌ Failed to load whitelists:", err);
 });
+
 
