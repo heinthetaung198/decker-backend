@@ -55,9 +55,9 @@ async function loadCsvFromUrl(url) {
 }
 
 // === Load whitelists from GitHub ===
-loadCsvFromGitHub("https://github.com/heinthetaung198/decker-backend/blob/main/degen_mfers.csv", degenMfersMap, true);
-loadCsvFromGitHub("https://github.com/heinthetaung198/decker-backend/blob/main/og_whitelist.csv", ogWhitelist);
-loadCsvFromGitHub("https://github.com/heinthetaung198/decker-backend/blob/main/decker_role_holder.csv", deckerRoleHolders);
+const DEGEN_CSV ="https://github.com/heinthetaung198/decker-backend/blob/main/degen_mfers.csv";
+const OG_CSV = "https://github.com/heinthetaung198/decker-backend/blob/main/og_whitelist.csv";
+const DECKER_CSV = "https://github.com/heinthetaung198/decker-backend/blob/main/decker_role_holder.csv";
 
 let degenMfersMap = new Map();
 let ogWhitelist = new Set();
