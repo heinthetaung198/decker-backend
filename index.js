@@ -2,8 +2,8 @@
 const axios = require("axios");
 const express = require("express");
 const cors = require("cors");
-const csv = require("csv-parser");
 const mongoose = require("mongoose");
+const csv = require("csv-parser");
 const { Readable } = require("stream");
 require("dotenv").config();
 
@@ -20,10 +20,6 @@ const MAX_LOOPS = 10;
 const SOL_TO_USD = 100;
 
 // === MongoDB setup ===
-if (!process.env.MONGO_URI) {
-  console.error("❌ Missing MONGO_URI in environment variables!");
-  process.exit(1);
-}
 mongoose.connect(process.env.MONGO_URI, { dbName: "wallet_cache" });
 const txCacheSchema = new mongoose.Schema({
   wallet: { type: String, required: true, unique: true },
@@ -32,95 +28,92 @@ const txCacheSchema = new mongoose.Schema({
 });
 const TxCache = mongoose.model("TxCache", txCacheSchema);
 
-// === CSV whitelists from GitHub ===
-const degenMfersMap = new Map();
-const ogWhitelist = new Set();
-const deckerRoleHolders = new Set();
-
-async function loadCsvFromGitHub(url, mapOrSet, isMap = false) {
-  try {
-    const resp = await axios.get(url);
-    Readable.from(resp.data)
-      .pipe(csv())
-      .on("data", row => {
-        if (row.wallet) {
-          if (isMap) mapOrSet.set(row.wallet.trim().toLowerCase(), parseInt(row.amount, 10) || 0);
-          else mapOrSet.add(row.wallet.trim().toLowerCase());
-        }
-      })
-      .on("end", () => console.log(`✅ CSV loaded from ${url}`));
-  } catch (err) {
-    console.error(`❌ Failed to load CSV from ${url}:`, err.message);
-  }
-}
-
-// Replace with your actual GitHub raw URLs
-loadCsvFromGitHub("https://github.com/heinthetaung198/decker-backend/blob/main/degen_mfers.csv", degenMfersMap, true);
-loadCsvFromGitHub("https://github.com/heinthetaung198/decker-backend/blob/main/og_whitelist.csv", ogWhitelist);
-loadCsvFromGitHub("https://github.com/heinthetaung198/decker-backend/blob/main/decker_role_holder.csv", deckerRoleHolders);
-
 // Optional: catch unhandled promise rejection
 process.on("unhandledRejection", (reason) => console.error("💥 Unhandled Rejection:", reason));
 
 const HELIUS_API_KEY = process.env.HELIUS_API_KEY;
 if (!HELIUS_API_KEY) {
-  console.error("❌ Missing Helius API Key! Set HELIUS_API_KEY in environment variables");
+  console.error("❌ Missing Helius API Key! Set HELIUS_API_KEY in .env");
   process.exit(1);
 }
+
+// === Load CSV from GitHub URL helper ===
+async function loadCsvFromUrl(url) {
+  const res = await axios.get(url);
+  return new Promise((resolve, reject) => {
+    const dataMap = new Map();
+    const dataSet = new Set();
+    Readable.from(res.data)
+      .pipe(csv())
+      .on("data", (row) => {
+        if (row.wallet && row.amount) dataMap.set(row.wallet.trim().toLowerCase(), parseInt(row.amount, 10) || 0);
+        else if (row.wallet) dataSet.add(row.wallet.trim().toLowerCase());
+      })
+      .on("end", () => resolve({ map: dataMap, set: dataSet }))
+      .on("error", reject);
+  });
+}
+
+// === Load whitelists from GitHub ===
+loadCsvFromGitHub("https://github.com/heinthetaung198/decker-backend/blob/main/degen_mfers.csv", degenMfersMap, true);
+loadCsvFromGitHub("https://github.com/heinthetaung198/decker-backend/blob/main/og_whitelist.csv", ogWhitelist);
+loadCsvFromGitHub("https://github.com/heinthetaung198/decker-backend/blob/main/decker_role_holder.csv", deckerRoleHolders);
+
+let degenMfersMap = new Map();
+let ogWhitelist = new Set();
+let deckerRoleHolders = new Set();
+
+(async () => {
+  try {
+    const degen = await loadCsvFromUrl(DEGEN_CSV);
+    degenMfersMap = degen.map;
+    console.log("✅ Degen Mfers whitelist loaded from GitHub");
+
+    const og = await loadCsvFromUrl(OG_CSV);
+    ogWhitelist = og.set;
+    console.log("✅ OG whitelist loaded from GitHub");
+
+    const decker = await loadCsvFromUrl(DECKER_CSV);
+    deckerRoleHolders = decker.set;
+    console.log("✅ Decker Role Holder whitelist loaded from GitHub");
+  } catch (err) {
+    console.error("❌ Failed to load CSVs:", err);
+  }
+})();
 
 // === Helius fetch with retry and caching ===
 async function fetchTransactions(wallet) {
   const walletLower = wallet.toLowerCase();
   const cached = await TxCache.findOne({ wallet: walletLower });
-  if (cached && cached.transactions?.length > 0) {
-    console.log(`⚡ Using cached transactions for ${walletLower}`);
-    return cached.transactions;
-  }
+  if (cached && cached.transactions?.length > 0) return cached.transactions;
 
   let allTxs = [];
   let before = null;
-
   for (let loop = 0; loop < MAX_LOOPS; loop++) {
     const url = `https://api.helius.xyz/v0/addresses/${wallet}/transactions?api-key=${HELIUS_API_KEY}&limit=100${before ? `&before=${before}` : ""}`;
     let success = false;
     for (let attempt = 1; attempt <= 5; attempt++) {
       try {
-        console.log(`📡 Fetching transactions (loop ${loop + 1}, attempt ${attempt}) for wallet: ${wallet}`);
         const resp = await axios.get(url, { timeout: 15000 });
         if (Array.isArray(resp.data)) {
           const txs = resp.data;
           allTxs = allTxs.concat(txs);
-          if (txs.length === 0) {
-            success = true;
-            break;
-          }
+          if (txs.length === 0) { success = true; break; }
           before = txs[txs.length - 1].signature;
-          success = true;
-          break;
+          success = true; break;
         }
       } catch (err) {
-        console.warn(`⚠️ Helius fetch failed (attempt ${attempt}):`, err.message);
-        await new Promise(r => setTimeout(r, 500 * attempt));
+        await new Promise((r) => setTimeout(r, 500 * attempt));
       }
     }
-    if (!success) {
-      console.warn("❌ Failed to fetch transactions after retries, using what we have");
-      break;
-    }
+    if (!success) break;
   }
 
-  // Save to cache
-  try {
-    await TxCache.findOneAndUpdate(
-      { wallet: walletLower },
-      { wallet: walletLower, transactions: allTxs, updatedAt: new Date() },
-      { upsert: true }
-    );
-  } catch (err) {
-    console.warn("⚠️ Failed to save to cache:", err.message);
-  }
-
-  console.log(`✅ Fetched transactions for ${walletLower}, count: ${allTxs.length}`);
+  await TxCache.findOneAndUpdate(
+    { wallet: walletLower },
+    { wallet: walletLower, transactions: allTxs, updatedAt: new Date() },
+    { upsert: true }
+  );
   return allTxs;
 }
 
@@ -128,24 +121,17 @@ async function fetchTransactions(wallet) {
 app.get("/check-eligibility", async (req, res) => {
   const walletRaw = req.query.wallet;
   if (!walletRaw) return res.status(400).json({ error: "Missing wallet address" });
-
   const wallet = walletRaw.trim().toLowerCase();
 
   try {
-    const txs = await fetchTransactions(wallet);
-
-    let totalUSD = 0;
-    let relevantTxCount = 0;
+    const txs = await fetchTransactions(walletRaw.trim());
+    let totalUSD = 0, relevantTxCount = 0;
 
     for (const tx of txs || []) {
       if (tx.nativeTransfers) {
         for (const transfer of tx.nativeTransfers) {
-          if (
-            transfer.toUserAccount?.toLowerCase() === wallet ||
-            transfer.fromUserAccount?.toLowerCase() === wallet
-          ) {
-            const solAmount = transfer.amount / 1_000_000_000;
-            totalUSD += solAmount * SOL_TO_USD;
+          if (transfer.toUserAccount?.toLowerCase() === wallet || transfer.fromUserAccount?.toLowerCase() === wallet) {
+            totalUSD += transfer.amount / 1_000_000_000 * SOL_TO_USD;
             relevantTxCount++;
           }
         }
@@ -153,8 +139,7 @@ app.get("/check-eligibility", async (req, res) => {
     }
 
     // Tier logic
-    let tier = null;
-    let reward = 0;
+    let tier = null, reward = 0;
     if (totalUSD >= 3_000_000) { tier = 1; reward = 25000; }
     else if (totalUSD >= 500_000) { tier = 2; reward = 15000; }
     else if (totalUSD >= 250_000) { tier = 3; reward = 7000; }
@@ -192,6 +177,3 @@ app.get("/check-eligibility", async (req, res) => {
 
 // === Start server ===
 app.listen(5000, () => console.log("✅ Backend running on http://localhost:5000"));
-
-
-
